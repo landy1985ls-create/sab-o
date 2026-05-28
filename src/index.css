@@ -1,0 +1,76 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700;800&family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Outfit", var(--font-sans);
+  --font-serif: "Playfair Display", Georgia, serif;
+  
+  --color-sage-50: #f0f4f0;
+  --color-sage-100: #e2ebe3;
+  --color-sage-200: #cbdec0;
+  --color-sage-300: #8da47e;
+  --color-sage-400: #6b8a59;
+  --color-sage-500: #496a38;
+  --color-sage-600: #3b5c2c;
+  --color-sage-700: #2d5a27;
+  --color-sage-800: #1d3619;
+  --color-sage-900: #122210;
+  --color-sage-950: #0a1309;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: #f0f4f0;
+  color: var(--color-sage-900);
+  overflow-x: hidden;
+  scroll-behavior: smooth;
+  background-image: 
+    radial-gradient(at 10% 10%, rgba(141, 164, 126, 0.2) 0px, transparent 50%),
+    radial-gradient(at 90% 90%, rgba(45, 90, 39, 0.15) 0px, transparent 50%);
+  background-attachment: fixed;
+}
+
+/* Glassmorphism custom design components */
+.glass-panel {
+  background-color: rgba(255, 255, 255, 0.45);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  box-shadow: 0 8px 32px 0 rgba(45, 90, 39, 0.05);
+}
+
+.glass-panel-heavy {
+  background-color: rgba(255, 255, 255, 0.65);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  box-shadow: 0 12px 40px 0 rgba(45, 90, 39, 0.08);
+}
+
+.glass-input {
+  background-color: rgba(255, 255, 255, 0.5);
+  backdrop-filter: blur(4px);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+}
+
+.glass-input:focus {
+  background-color: rgba(255, 255, 255, 0.82);
+  border-color: var(--color-sage-700);
+  box-shadow: 0 0 0 1px var(--color-sage-700);
+}
+
+/* Base custom interactive scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #f0f4f0;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-sage-300);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-sage-400);
+}

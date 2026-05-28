@@ -1,0 +1,6 @@
+{
+  "name": "Saboaria Artesanal",
+  "description": "Landing page para Saboaria Artesanal de produtos naturais, sustentáveis e cuidados personalizados com a pele. Possui catálogo gerenciável, cadastro de clientes, recomendação de rotinas e integração com Supabase.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
