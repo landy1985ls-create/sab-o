@@ -52,11 +52,11 @@ export const INITIAL_PRODUCTS: Product[] = [
 ];
 
 export const INITIAL_CONFIG: IntegrationConfig = {
-  supabaseUrl: "",
-  supabaseAnonKey: "",
-  n8nWebhookUrl: "",
-  instagramUrl: "https://instagram.com/saboaria.artesanal", // Default place
-  mercadoLivreUrl: "https://www.mercadolivre.com.br/sabonete-barra-artesanal-mel-propolis-base-glicerina-natural/p/MLB67888540#polycard_client=search-desktop&be_origin=backend&search_layout=grid&position=29&type=product&tracking_id=e7625bd4-30c5-4a42-802d-5dcb6e2fe392&wid=MLB4600328969&sid=search" // Affiliate list
+  supabaseUrl: ((import.meta as any).env?.VITE_SUPABASE_URL as string) || "",
+  supabaseAnonKey: ((import.meta as any).env?.VITE_SUPABASE_ANON_KEY as string) || "",
+  n8nWebhookUrl: ((import.meta as any).env?.VITE_N8N_WEBHOOK_URL as string) || "",
+  instagramUrl: ((import.meta as any).env?.VITE_INSTAGRAM_URL as string) || "https://instagram.com/saboaria.artesanal", // Default place
+  mercadoLivreUrl: ((import.meta as any).env?.VITE_MERCADO_LIVRE_URL as string) || "https://www.mercadolivre.com.br/sabonete-barra-artesanal-mel-propolis-base-glicerina-natural/p/MLB67888540#polycard_client=search-desktop&be_origin=backend&search_layout=grid&position=29&type=product&tracking_id=e7625bd4-30c5-4a42-802d-5dcb6e2fe392&wid=MLB4600328969&sid=search" // Affiliate list
 };
 
 export const INITIAL_LEADS: SavedLead[] = [

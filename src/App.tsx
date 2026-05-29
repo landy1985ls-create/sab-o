@@ -66,8 +66,20 @@ export default function App() {
         // Migração do link padrão do Mercado Livre antigo para o novo link solicitado
         if (parsed.mercadoLivreUrl === "https://lista.mercadolivre.com.br/saboaria-artesanal") {
           parsed.mercadoLivreUrl = INITIAL_CONFIG.mercadoLivreUrl;
-          localStorage.setItem('saboaria_config', JSON.stringify(parsed));
         }
+        
+        // Se as chaves estiverem vazias no localStorage mas definidas no .env (como no Vercel)
+        if (!parsed.supabaseUrl && INITIAL_CONFIG.supabaseUrl) {
+          parsed.supabaseUrl = INITIAL_CONFIG.supabaseUrl;
+        }
+        if (!parsed.supabaseAnonKey && INITIAL_CONFIG.supabaseAnonKey) {
+          parsed.supabaseAnonKey = INITIAL_CONFIG.supabaseAnonKey;
+        }
+        if (!parsed.n8nWebhookUrl && INITIAL_CONFIG.n8nWebhookUrl) {
+          parsed.n8nWebhookUrl = INITIAL_CONFIG.n8nWebhookUrl;
+        }
+
+        localStorage.setItem('saboaria_config', JSON.stringify(parsed));
         setIntegrationConfig(parsed);
         setTempConfig(parsed);
         loadedConfig = parsed;
