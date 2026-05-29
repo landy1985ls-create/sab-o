@@ -43,6 +43,7 @@ export interface SavedLead {
   submittedAt: string;
   status: 'Pendente' | 'Respondido' | 'Em Produção';
   clientId?: string; // Links back to registered clients!
+  agreeToTerms?: boolean; // Privacy policy consent
 }
 
 export interface UserClient {

@@ -53,6 +53,8 @@ export default function App() {
   // Keep a small loading state for the Supabase live syncing alert
   const [isSupabaseLoading, setIsSupabaseLoading] = useState(false);
   const [supabaseError, setSupabaseError] = useState<string | null>(null);
+  const [isSyncingLeads, setIsSyncingLeads] = useState(false);
+  const [syncStatusMsg, setSyncStatusMsg] = useState<string | null>(null);
 
   // Load from localStorage on mount & sync configurations
   useEffect(() => {
@@ -227,7 +229,8 @@ export default function App() {
               observations: l.observations || '',
               submittedAt: l.submitted_at || new Date().toISOString(),
               status: l.status || 'Pendente',
-              clientId: l.client_id
+              clientId: l.client_id,
+              agreeToTerms: l.agree_to_terms !== false
             }));
             setLeads(mappedLeads);
             localStorage.setItem('saboaria_leads', JSON.stringify(mappedLeads));
@@ -469,7 +472,8 @@ export default function App() {
       observations: newLead.observations,
       submittedAt: newLead.submittedAt,
       status: 'Pendente',
-      clientId: currentUser?.type === 'client' ? currentUser.data?.id : undefined
+      clientId: currentUser?.type === 'client' ? currentUser.data?.id : undefined,
+      agreeToTerms: newLead.agreeToTerms !== false
     };
     const updated = [leadObj, ...leads];
     setLeads(updated);
@@ -480,7 +484,7 @@ export default function App() {
       try {
         setSupabaseError(null);
 
-        // Try inserting with extended schema (including status and client_id)
+        // Try inserting with extended schema (including status, client_id and agree_to_terms)
         const primaryBody = {
           id: cleanLeadId,
           name: leadObj.name,
@@ -492,6 +496,7 @@ export default function App() {
           observations: leadObj.observations,
           status: leadObj.status,
           client_id: leadObj.clientId || null,
+          agree_to_terms: leadObj.agreeToTerms,
           submitted_at: leadObj.submittedAt
         };
 
@@ -506,10 +511,10 @@ export default function App() {
           body: JSON.stringify(primaryBody)
         });
 
-        // If it fails with a 400 Bad Request, table may not have status or client_id columns yet.
-        // Fallback to sending only the original 9 columns.
+        // If it fails with a 400 Bad Request, table may not have status, client_id or agree_to_terms columns yet.
+        // Fallback to sending only the original columns.
         if (!response.ok && response.status === 400) {
-          console.warn("Extended insert failed. Retrying with original 9-column fallback schema...");
+          console.warn("Extended insert failed. Retrying with original fallback schema...");
           const fallbackBody = {
             id: cleanLeadId,
             name: leadObj.name,
@@ -610,6 +615,133 @@ export default function App() {
       } catch (err) {
         console.error("Falha ao atualizar status do lead no Supabase:", err);
       }
+    }
+  };
+
+  const handleSyncLeadsToSupabase = async () => {
+    if (!supabaseUrlCleaned || !integrationConfig.supabaseAnonKey) {
+      alert("Por favor, configure primeiro a URL e a Chave do Supabase no painel lateral de Conexão.");
+      return;
+    }
+    
+    setIsSyncingLeads(true);
+    setSyncStatusMsg("Sincronizando todas as consultas locais com o Supabase...");
+    setSupabaseError(null);
+    let successCount = 0;
+    let failCount = 0;
+
+    try {
+      for (const leadObj of leads) {
+        // Prepare lead data matching Supabase structure
+        const primaryBody = {
+          id: leadObj.id,
+          name: leadObj.name,
+          email: leadObj.email,
+          whatsapp: leadObj.whatsapp,
+          skin_type: leadObj.skinType,
+          concern: leadObj.concern,
+          fragrance_pref: leadObj.fragrancePref,
+          observations: leadObj.observations,
+          status: leadObj.status,
+          client_id: leadObj.clientId || null,
+          agree_to_terms: leadObj.agreeToTerms !== false,
+          submitted_at: leadObj.submittedAt
+        };
+
+        try {
+          let response = await fetch(`${supabaseUrlCleaned}/rest/v1/clientes_consultas`, {
+            method: 'POST',
+            headers: {
+              'apikey': integrationConfig.supabaseAnonKey,
+              'Authorization': `Bearer ${integrationConfig.supabaseAnonKey}`,
+              'Content-Type': 'application/json',
+              'Prefer': 'resolution=merge-duplicates' // UPSERT implícito no PostgREST
+            },
+            body: JSON.stringify(primaryBody)
+          });
+
+          // Fallback if schema doesn't fit standard POST perfectly
+          if (!response.ok && response.status === 400) {
+            const fallbackBody = {
+              id: leadObj.id,
+              name: leadObj.name,
+              email: leadObj.email,
+              whatsapp: leadObj.whatsapp,
+              skin_type: leadObj.skinType,
+              concern: leadObj.concern,
+              fragrance_pref: leadObj.fragrancePref,
+              observations: leadObj.observations,
+              submitted_at: leadObj.submittedAt
+            };
+
+            response = await fetch(`${supabaseUrlCleaned}/rest/v1/clientes_consultas`, {
+              method: 'POST',
+              headers: {
+                'apikey': integrationConfig.supabaseAnonKey,
+                'Authorization': `Bearer ${integrationConfig.supabaseAnonKey}`,
+                'Content-Type': 'application/json',
+                'Prefer': 'resolution=merge-duplicates'
+              },
+              body: JSON.stringify(fallbackBody)
+            });
+          }
+
+          if (response.ok) {
+            successCount++;
+          } else {
+            const errText = await response.text();
+            console.error(`Erro ao sincronizar consulta individual: ${errText}`);
+            failCount++;
+          }
+        } catch (individualErr) {
+          console.error("Falha ao se conectar para sincronizar consulta:", individualErr);
+          failCount++;
+        }
+      }
+
+      // Fetch fresh data from Supabase to merge
+      const leadRes = await fetch(`${supabaseUrlCleaned}/rest/v1/clientes_consultas?select=*&order=submitted_at.desc`, {
+        method: 'GET',
+        headers: {
+          'apikey': integrationConfig.supabaseAnonKey,
+          'Authorization': `Bearer ${integrationConfig.supabaseAnonKey}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (leadRes.ok) {
+        const supabaseLeads = await leadRes.json();
+        if (supabaseLeads) {
+          const mappedLeads: SavedLead[] = supabaseLeads.map((l: any) => ({
+            id: l.id,
+            name: l.name,
+            email: l.email,
+            whatsapp: l.whatsapp,
+            skinType: l.skin_type || 'normal',
+            concern: l.concern || 'geral',
+            fragrancePref: l.fragrance_pref || 'herbal',
+            observations: l.observations || '',
+            submittedAt: l.submitted_at || new Date().toISOString(),
+            status: l.status || 'Pendente',
+            clientId: l.client_id,
+            agreeToTerms: l.agree_to_terms !== false
+          }));
+          setLeads(mappedLeads);
+          localStorage.setItem('saboaria_leads', JSON.stringify(mappedLeads));
+        }
+      }
+
+      if (failCount === 0) {
+        setSyncStatusMsg(`Sincronização completa realizada! ${successCount} diagnósticos integrados com o Supabase.`);
+      } else {
+        setSyncStatusMsg(`Sincronização parcial realizada: ${successCount} integrados, ${failCount} falhas. Rode o script SQL do guia no seu Supabase para criar as novas colunas.`);
+      }
+      setTimeout(() => setSyncStatusMsg(null), 6000);
+    } catch (generalErr: any) {
+      console.error("Erro geral na sincronização manual com o Supabase:", generalErr);
+      setSupabaseError(`Erro ao migrar dados: ${generalErr.message || generalErr}`);
+    } finally {
+      setIsSyncingLeads(false);
     }
   };
 
@@ -742,19 +874,73 @@ export default function App() {
         {currentUser?.type === 'admin' && (
           <section className="py-12 bg-white border-t border-sage-100 animate-fadeIn">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-sage-100 pb-4 gap-2">
+            <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-sage-100 pb-4 gap-4">
               <div>
                 <h3 className="font-display font-extrabold text-lg text-sage-950 flex items-center gap-2">
                   <Eye className="h-5 w-5 text-sage-600" />
                   <span>Painel do Administrador: Consultas Recebidas</span>
                 </h3>
-                <p className="text-xs text-sage-500">Acompanhe as respostas de formulários cadastradas por clientes localmente no navegador.</p>
+                <p className="text-xs text-sage-500 font-light">Gerencie e sincronize diagnósticos em tempo real integrados com o seu banco de dados Supabase e n8n automações.</p>
               </div>
               
-              <div className="text-[10px] bg-sage-50 text-sage-600 px-3 py-1 rounded-md border border-sage-100 font-mono">
-                Total registrado: {leads.length} leads
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Supabase connection status indicator */}
+                <div className={`text-[10px] px-3 py-1 rounded-md border font-sans font-semibold flex items-center gap-1.5 ${
+                  supabaseUrlCleaned && integrationConfig.supabaseAnonKey
+                    ? supabaseError
+                      ? 'bg-rose-50 text-rose-700 border-rose-200'
+                      : 'bg-emerald-50 text-emerald-700 border-emerald-250'
+                    : 'bg-amber-50 text-amber-700 border-amber-200'
+                }`}>
+                  <span className={`h-1.5 w-1.5 rounded-full ${
+                    supabaseUrlCleaned && integrationConfig.supabaseAnonKey
+                      ? supabaseError
+                        ? 'bg-rose-500'
+                        : 'bg-emerald-500 animate-pulse'
+                      : 'bg-amber-500'
+                  }`} />
+                  <span>
+                    {supabaseUrlCleaned && integrationConfig.supabaseAnonKey
+                      ? supabaseError
+                        ? 'Erro no Supabase'
+                        : 'Conectado no Supabase'
+                      : 'Modo Local (Banco Desconectado)'}
+                  </span>
+                </div>
+
+                {/* Database Sync action button */}
+                <button
+                  type="button"
+                  onClick={handleSyncLeadsToSupabase}
+                  disabled={isSyncingLeads}
+                  className={`text-[11px] font-bold px-3 py-1.5 rounded-lg border shadow-xs flex items-center gap-1.5 cursor-pointer select-none transition-all ${
+                    isSyncingLeads 
+                      ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' 
+                      : 'bg-[#2d5a27]/10 hover:bg-[#2d5a27]/20 text-[#2d5a27] border-[#2d5a27]/30'
+                  }`}
+                  title="Sincronizar formulários locais não enviados com o Supabase"
+                >
+                  <Database className={`h-3.5 w-3.5 ${isSyncingLeads ? 'animate-spin' : ''}`} />
+                  <span>{isSyncingLeads ? "Sincronizando..." : "Sincronizar Banco de Dados 🔄"}</span>
+                </button>
+
+                <div className="text-[10px] bg-sage-50 text-sage-600 px-3 py-1.5 rounded-lg border border-sage-100 font-mono">
+                  Total: {leads.length} leads
+                </div>
               </div>
             </div>
+
+            {/* Sync feedback panel */}
+            {(syncStatusMsg || supabaseError) && (
+              <div className={`mt-4 p-3.5 rounded-xl text-xs leading-relaxed flex items-start gap-2 border ${
+                supabaseError 
+                  ? 'bg-rose-50 text-rose-800 border-rose-200' 
+                  : 'bg-emerald-50 text-emerald-800 border-emerald-250'
+              }`}>
+                <span className="font-bold shrink-0">{supabaseError ? "⚠️ Erro de Conexão:" : "✓ Informação:"}</span>
+                <span className="font-light">{supabaseError || syncStatusMsg}</span>
+              </div>
+            )}
 
             {leads.length > 0 ? (
               <div className="mt-6 overflow-x-auto rounded-2xl border border-sage-100 shadow-xs">
