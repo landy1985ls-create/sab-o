@@ -33,29 +33,77 @@ export default function App() {
   // Settings form values
   const [tempConfig, setTempConfig] = useState<IntegrationConfig>(INITIAL_CONFIG);
 
-  // Load from localStorage on mount
-  useEffect(() => {
-    const savedProds = localStorage.getItem('saboaria_products');
-    if (savedProds) {
-      setProducts(JSON.parse(savedProds));
-    } else {
-      setProducts(INITIAL_PRODUCTS);
-      localStorage.setItem('saboaria_products', JSON.stringify(INITIAL_PRODUCTS));
-    }
+  // Helper functions for IDs
+  const isUUID = (str: string) => {
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    return uuidRegex.test(str);
+  };
 
+  const generateUUID = () => {
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+      return crypto.randomUUID();
+    }
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+      const r = (Math.random() * 16) | 0;
+      const v = c === 'x' ? r : (r & 0x3) | 0x8;
+      return v.toString(16);
+    });
+  };
+
+  // Keep a small loading state for the Supabase live syncing alert
+  const [isSupabaseLoading, setIsSupabaseLoading] = useState(false);
+  const [supabaseError, setSupabaseError] = useState<string | null>(null);
+
+  // Load from localStorage on mount & sync configurations
+  useEffect(() => {
     const savedConfig = localStorage.getItem('saboaria_config');
+    let loadedConfig = INITIAL_CONFIG;
     if (savedConfig) {
-      const parsed = JSON.parse(savedConfig);
-      setIntegrationConfig(parsed);
-      setTempConfig(parsed);
+      try {
+        const parsed = JSON.parse(savedConfig);
+        // Migração do link padrão do Mercado Livre antigo para o novo link solicitado
+        if (parsed.mercadoLivreUrl === "https://lista.mercadolivre.com.br/saboaria-artesanal") {
+          parsed.mercadoLivreUrl = INITIAL_CONFIG.mercadoLivreUrl;
+          localStorage.setItem('saboaria_config', JSON.stringify(parsed));
+        }
+        setIntegrationConfig(parsed);
+        setTempConfig(parsed);
+        loadedConfig = parsed;
+      } catch (e) {
+        console.error(e);
+      }
     } else {
       setIntegrationConfig(INITIAL_CONFIG);
       setTempConfig(INITIAL_CONFIG);
     }
 
+    const savedProds = localStorage.getItem('saboaria_products');
+    if (savedProds) {
+      try {
+        setProducts(JSON.parse(savedProds));
+      } catch (e) {
+        setProducts(INITIAL_PRODUCTS);
+      }
+    } else {
+      // For Supabase, map the mock products to standard UUID format
+      const productsWithUUIDs = INITIAL_PRODUCTS.map(p => ({
+        ...p,
+        id: p.id === "prod-1" ? "10a26e84-18ca-4dbb-80df-269fa5bee6a1" :
+            p.id === "prod-2" ? "20b37f95-29db-4ecc-91e0-37afb6cff7b2" :
+            p.id === "prod-3" ? "30c48a06-3ae0-4fdd-a2f1-48b0c7dff8c3" :
+            p.id === "prod-4" ? "40d59b17-4bf1-5fee-b302-59c1d8eff9d4" : p.id
+      }));
+      setProducts(productsWithUUIDs);
+      localStorage.setItem('saboaria_products', JSON.stringify(productsWithUUIDs));
+    }
+
     const savedLeads = localStorage.getItem('saboaria_leads');
     if (savedLeads) {
-      setLeads(JSON.parse(savedLeads));
+      try {
+        setLeads(JSON.parse(savedLeads));
+      } catch (e) {
+        setLeads(INITIAL_LEADS);
+      }
     } else {
       setLeads(INITIAL_LEADS);
       localStorage.setItem('saboaria_leads', JSON.stringify(INITIAL_LEADS));
@@ -63,47 +111,355 @@ export default function App() {
 
     const savedUser = localStorage.getItem('saboaria_user');
     if (savedUser) {
-      setCurrentUser(JSON.parse(savedUser));
+      try {
+        setCurrentUser(JSON.parse(savedUser));
+      } catch (e) {
+        console.error(e);
+      }
     }
   }, []);
 
-  // Sync helpers
-  const handleAddProduct = (newProd: Product) => {
-    const updated = [newProd, ...products];
+  const supabaseUrlCleaned = integrationConfig.supabaseUrl ? integrationConfig.supabaseUrl.trim().replace(/\/$/, "") : "";
+
+  // Fetch live products & leads from Supabase when configuration is active
+  useEffect(() => {
+    if (!supabaseUrlCleaned || !integrationConfig.supabaseAnonKey) return;
+
+    const fetchSupabaseData = async () => {
+      setIsSupabaseLoading(true);
+      setSupabaseError(null);
+      try {
+        // 1. Fetch Products
+        const prodRes = await fetch(`${supabaseUrlCleaned}/rest/v1/produtos?select=*`, {
+          method: 'GET',
+          headers: {
+            'apikey': integrationConfig.supabaseAnonKey,
+            'Authorization': `Bearer ${integrationConfig.supabaseAnonKey}`,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        if (prodRes.ok) {
+          const supabaseProds = await prodRes.json();
+          if (supabaseProds && supabaseProds.length > 0) {
+            // Map keys back from database rows to product type
+            const mappedProds: Product[] = supabaseProds.map((p: any) => ({
+              id: p.id,
+              name: p.name,
+              description: p.description || '',
+              price: Number(p.price) || 0,
+              weight: Number(p.weight) || 110,
+              category: p.category || 'Todos',
+              ingredients: p.ingredients || [],
+              benefits: p.benefits || [],
+              image: p.image || '',
+              stock: Number(p.stock) ?? 10
+            }));
+            setProducts(mappedProds);
+            localStorage.setItem('saboaria_products', JSON.stringify(mappedProds));
+          } else {
+            // If Supabase table works but is completely empty, let's seed it automatically with the 4 default products!
+            const productsWithUUIDs = INITIAL_PRODUCTS.map(p => ({
+              ...p,
+              id: p.id === "prod-1" ? "10a26e84-18ca-4dbb-80df-269fa5bee6a1" :
+                  p.id === "prod-2" ? "20b37f95-29db-4ecc-91e0-37afb6cff7b2" :
+                  p.id === "prod-3" ? "30c48a06-3ae0-4fdd-a2f1-48b0c7dff8c3" :
+                  p.id === "prod-4" ? "40d59b17-4bf1-5fee-b302-59c1d8eff9d4" : p.id
+            }));
+
+            const initialDbPayload = productsWithUUIDs.map(p => ({
+              id: p.id,
+              name: p.name,
+              description: p.description,
+              price: Number(p.price),
+              weight: Number(p.weight),
+              category: p.category,
+              ingredients: p.ingredients,
+              benefits: p.benefits,
+              image: p.image,
+              stock: Number(p.stock)
+            }));
+
+            const seedRes = await fetch(`${supabaseUrlCleaned}/rest/v1/produtos`, {
+              method: 'POST',
+              headers: {
+                'apikey': integrationConfig.supabaseAnonKey,
+                'Authorization': `Bearer ${integrationConfig.supabaseAnonKey}`,
+                'Content-Type': 'application/json',
+                'Prefer': 'return=minimal'
+              },
+              body: JSON.stringify(initialDbPayload)
+            });
+
+            if (!seedRes.ok) {
+              const errMsg = await seedRes.text();
+              console.error("Erro ao semear banco Supabase:", errMsg);
+              setSupabaseError(`Erro ao semear produtos: ${errMsg}`);
+            }
+          }
+        } else {
+          const errMsg = await prodRes.text();
+          console.error("Erro de leitura de produtos no Supabase:", errMsg);
+          setSupabaseError(`Erro de leitura dos produtos: ${prodRes.status} (${errMsg})`);
+        }
+
+        // 2. Fetch Leads (skin consultations)
+        const leadRes = await fetch(`${supabaseUrlCleaned}/rest/v1/clientes_consultas?select=*&order=submitted_at.desc`, {
+          method: 'GET',
+          headers: {
+            'apikey': integrationConfig.supabaseAnonKey,
+            'Authorization': `Bearer ${integrationConfig.supabaseAnonKey}`,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        if (leadRes.ok) {
+          const supabaseLeads = await leadRes.json();
+          if (supabaseLeads) {
+            const mappedLeads: SavedLead[] = supabaseLeads.map((l: any) => ({
+              id: l.id,
+              name: l.name,
+              email: l.email,
+              whatsapp: l.whatsapp,
+              skinType: l.skin_type || 'normal',
+              concern: l.concern || 'geral',
+              fragrancePref: l.fragrance_pref || 'herbal',
+              observations: l.observations || '',
+              submittedAt: l.submitted_at || new Date().toISOString(),
+              status: l.status || 'Pendente',
+              clientId: l.client_id
+            }));
+            setLeads(mappedLeads);
+            localStorage.setItem('saboaria_leads', JSON.stringify(mappedLeads));
+          }
+        } else {
+          const errMsg = await leadRes.text();
+          console.error("Erro de leitura de consultas no Supabase:", errMsg);
+          setSupabaseError(prev => prev || `Erro ao ler consultas: ${leadRes.status} (${errMsg})`);
+        }
+      } catch (err: any) {
+        console.error("Erro na leitura ao vivo do Supabase:", err);
+        setSupabaseError(`Falha de conexão com Supabase: ${err.message || err}`);
+      } finally {
+        setIsSupabaseLoading(false);
+      }
+    };
+
+    fetchSupabaseData();
+  }, [supabaseUrlCleaned, integrationConfig.supabaseAnonKey]);
+
+  // Sync helpers with live Supabase writes
+  const handleAddProduct = async (newProd: Product) => {
+    // Force UUID format to prevent database syntax errors in Postgres UUID key
+    const cleanProd = {
+      ...newProd,
+      id: isUUID(newProd.id) ? newProd.id : generateUUID()
+    };
+    
+    const updated = [cleanProd, ...products];
     setProducts(updated);
     localStorage.setItem('saboaria_products', JSON.stringify(updated));
+
+    if (supabaseUrlCleaned && integrationConfig.supabaseAnonKey) {
+      try {
+        setSupabaseError(null);
+        // Exclude frontend-only fields like 'isCustomized' to prevent PostgREST errors on missing columns
+        const dbPayload = {
+          id: cleanProd.id,
+          name: cleanProd.name,
+          description: cleanProd.description,
+          price: Number(cleanProd.price),
+          weight: Number(cleanProd.weight),
+          category: cleanProd.category,
+          ingredients: cleanProd.ingredients,
+          benefits: cleanProd.benefits,
+          image: cleanProd.image,
+          stock: Number(cleanProd.stock)
+        };
+
+        const response = await fetch(`${supabaseUrlCleaned}/rest/v1/produtos`, {
+          method: 'POST',
+          headers: {
+            'apikey': integrationConfig.supabaseAnonKey,
+            'Authorization': `Bearer ${integrationConfig.supabaseAnonKey}`,
+            'Content-Type': 'application/json',
+            'Prefer': 'return=minimal'
+          },
+          body: JSON.stringify(dbPayload)
+        });
+
+        if (!response.ok) {
+          const errMsg = await response.text();
+          console.error("Erro de persistência no Supabase:", errMsg);
+          setSupabaseError(`Erro ao cadastrar produto no banco: ${errMsg}`);
+        }
+      } catch (err: any) {
+        console.error("Erro de persistência no Supabase:", err);
+        setSupabaseError(`Falha de conexão ao salvar: ${err.message || err}`);
+      }
+    }
   };
 
-  const handleUpdateProduct = (updatedProd: Product) => {
+  const handleUpdateProduct = async (updatedProd: Product) => {
     const updated = products.map(p => p.id === updatedProd.id ? updatedProd : p);
     setProducts(updated);
     localStorage.setItem('saboaria_products', JSON.stringify(updated));
+
+    if (supabaseUrlCleaned && integrationConfig.supabaseAnonKey) {
+      try {
+        setSupabaseError(null);
+        const response = await fetch(`${supabaseUrlCleaned}/rest/v1/produtos?id=eq.${updatedProd.id}`, {
+          method: 'PATCH',
+          headers: {
+            'apikey': integrationConfig.supabaseAnonKey,
+            'Authorization': `Bearer ${integrationConfig.supabaseAnonKey}`,
+            'Content-Type': 'application/json',
+            'Prefer': 'return=minimal'
+          },
+          body: JSON.stringify({
+            name: updatedProd.name,
+            description: updatedProd.description,
+            price: Number(updatedProd.price),
+            weight: Number(updatedProd.weight),
+            category: updatedProd.category,
+            ingredients: updatedProd.ingredients,
+            benefits: updatedProd.benefits,
+            image: updatedProd.image,
+            stock: Number(updatedProd.stock)
+          })
+        });
+
+        if (!response.ok) {
+          const errMsg = await response.text();
+          console.error("Erro ao atualizar no Supabase:", errMsg);
+          setSupabaseError(`Erro ao atualizar no banco: ${errMsg}`);
+        }
+      } catch (err: any) {
+        console.error("Erro ao atualizar no Supabase:", err);
+        setSupabaseError(`Falha de conexão ao atualizar: ${err.message || err}`);
+      }
+    }
   };
 
-  const handleDeleteProduct = (id: string) => {
+  const handleDeleteProduct = async (id: string) => {
     const updated = products.filter(p => p.id !== id);
     setProducts(updated);
     localStorage.setItem('saboaria_products', JSON.stringify(updated));
+
+    if (supabaseUrlCleaned && integrationConfig.supabaseAnonKey) {
+      try {
+        setSupabaseError(null);
+        const response = await fetch(`${supabaseUrlCleaned}/rest/v1/produtos?id=eq.${id}`, {
+          method: 'DELETE',
+          headers: {
+            'apikey': integrationConfig.supabaseAnonKey,
+            'Authorization': `Bearer ${integrationConfig.supabaseAnonKey}`
+          }
+        });
+
+        if (!response.ok) {
+          const errMsg = await response.text();
+          console.error("Erro ao deletar no Supabase:", errMsg);
+          setSupabaseError(`Erro ao deletar no banco: ${errMsg}`);
+        }
+      } catch (err: any) {
+        console.error("Erro ao deletar no Supabase:", err);
+        setSupabaseError(`Falha de conexão ao remover: ${err.message || err}`);
+      }
+    }
   };
 
-  const handleResetProducts = () => {
+  const handleResetProducts = async () => {
     if (window.confirm("Restaurar o catálogo de produtos original de exemplo?")) {
-      setProducts(INITIAL_PRODUCTS);
-      localStorage.setItem('saboaria_products', JSON.stringify(INITIAL_PRODUCTS));
+      const productsWithUUIDs = INITIAL_PRODUCTS.map(p => ({
+        ...p,
+        id: p.id === "prod-1" ? "10a26e84-18ca-4dbb-80df-269fa5bee6a1" :
+            p.id === "prod-2" ? "20b37f95-29db-4ecc-91e0-37afb6cff7b2" :
+            p.id === "prod-3" ? "30c48a06-3ae0-4fdd-a2f1-48b0c7dff8c3" :
+            p.id === "prod-4" ? "40d59b17-4bf1-5fee-b302-59c1d8eff9d4" : p.id
+      }));
+
+      setProducts(productsWithUUIDs);
+      localStorage.setItem('saboaria_products', JSON.stringify(productsWithUUIDs));
+
+      if (supabaseUrlCleaned && integrationConfig.supabaseAnonKey) {
+        try {
+          setSupabaseError(null);
+          // Clear current products
+          const deleteResponse = await fetch(`${supabaseUrlCleaned}/rest/v1/produtos?id=not.is.null`, {
+            method: 'DELETE',
+            headers: {
+              'apikey': integrationConfig.supabaseAnonKey,
+              'Authorization': `Bearer ${integrationConfig.supabaseAnonKey}`
+            }
+          });
+
+          if (!deleteResponse.ok) {
+            const errMsg = await deleteResponse.text();
+            console.error("Erro ao limpar produtos no Supabase:", errMsg);
+            setSupabaseError(`Erro ao limpar tabela: ${errMsg}`);
+            return;
+          }
+
+          // Map for database payload
+          const dbProducts = productsWithUUIDs.map(p => ({
+            id: p.id,
+            name: p.name,
+            description: p.description,
+            price: Number(p.price),
+            weight: Number(p.weight),
+            category: p.category,
+            ingredients: p.ingredients,
+            benefits: p.benefits,
+            image: p.image,
+            stock: Number(p.stock)
+          }));
+
+          // Seed defaults with UUID values
+          const seedResponse = await fetch(`${supabaseUrlCleaned}/rest/v1/produtos`, {
+            method: 'POST',
+            headers: {
+              'apikey': integrationConfig.supabaseAnonKey,
+              'Authorization': `Bearer ${integrationConfig.supabaseAnonKey}`,
+              'Content-Type': 'application/json',
+              'Prefer': 'return=minimal'
+            },
+            body: JSON.stringify(dbProducts)
+          });
+
+          if (!seedResponse.ok) {
+            const errMsg = await seedResponse.text();
+            console.error("Erro ao resetar no Supabase:", errMsg);
+            setSupabaseError(`Erro ao repopular produtos: ${errMsg}`);
+          }
+        } catch (err: any) {
+          console.error("Erro ao resetar no Supabase:", err);
+          setSupabaseError(`Falha de conexão ao resetar: ${err.message || err}`);
+        }
+      }
     }
   };
 
   const handleSaveConfig = (e: React.FormEvent) => {
     e.preventDefault();
-    setIntegrationConfig(tempConfig);
-    localStorage.setItem('saboaria_config', JSON.stringify(tempConfig));
+    const cleanedConfig = {
+      supabaseUrl: tempConfig.supabaseUrl ? tempConfig.supabaseUrl.trim().replace(/\/$/, "") : "",
+      supabaseAnonKey: tempConfig.supabaseAnonKey ? tempConfig.supabaseAnonKey.trim() : "",
+      n8nWebhookUrl: tempConfig.n8nWebhookUrl ? tempConfig.n8nWebhookUrl.trim().replace(/\/$/, "") : "",
+      instagramUrl: tempConfig.instagramUrl ? tempConfig.instagramUrl.trim() : "",
+      mercadoLivreUrl: tempConfig.mercadoLivreUrl ? tempConfig.mercadoLivreUrl.trim() : ""
+    };
+    setIntegrationConfig(cleanedConfig);
+    setTempConfig(cleanedConfig);
+    localStorage.setItem('saboaria_config', JSON.stringify(cleanedConfig));
     setIsSettingsOpen(false);
-    alert("Configurações salvas localmente com sucesso! Sua landing page está atualizada.");
+    alert("Configurações salvas localmente! Se a URL e chave do Supabase estiverem corretas, a sincronização acontecerá imediatamente.");
   };
 
-  const handleAddNewLead = (newLead: any) => {
+  const handleAddNewLead = async (newLead: any) => {
+    const cleanLeadId = isUUID(newLead.id) ? newLead.id : generateUUID();
     const leadObj: SavedLead = {
-      id: newLead.id,
+      id: cleanLeadId,
       name: newLead.name,
       email: newLead.email,
       whatsapp: newLead.whatsapp,
@@ -118,27 +474,143 @@ export default function App() {
     const updated = [leadObj, ...leads];
     setLeads(updated);
     localStorage.setItem('saboaria_leads', JSON.stringify(updated));
+
+    // Send also to Supabase
+    if (supabaseUrlCleaned && integrationConfig.supabaseAnonKey) {
+      try {
+        setSupabaseError(null);
+
+        // Try inserting with extended schema (including status and client_id)
+        const primaryBody = {
+          id: cleanLeadId,
+          name: leadObj.name,
+          email: leadObj.email,
+          whatsapp: leadObj.whatsapp,
+          skin_type: leadObj.skinType,
+          concern: leadObj.concern,
+          fragrance_pref: leadObj.fragrancePref,
+          observations: leadObj.observations,
+          status: leadObj.status,
+          client_id: leadObj.clientId || null,
+          submitted_at: leadObj.submittedAt
+        };
+
+        let response = await fetch(`${supabaseUrlCleaned}/rest/v1/clientes_consultas`, {
+          method: 'POST',
+          headers: {
+            'apikey': integrationConfig.supabaseAnonKey,
+            'Authorization': `Bearer ${integrationConfig.supabaseAnonKey}`,
+            'Content-Type': 'application/json',
+            'Prefer': 'return=minimal'
+          },
+          body: JSON.stringify(primaryBody)
+        });
+
+        // If it fails with a 400 Bad Request, table may not have status or client_id columns yet.
+        // Fallback to sending only the original 9 columns.
+        if (!response.ok && response.status === 400) {
+          console.warn("Extended insert failed. Retrying with original 9-column fallback schema...");
+          const fallbackBody = {
+            id: cleanLeadId,
+            name: leadObj.name,
+            email: leadObj.email,
+            whatsapp: leadObj.whatsapp,
+            skin_type: leadObj.skinType,
+            concern: leadObj.concern,
+            fragrance_pref: leadObj.fragrancePref,
+            observations: leadObj.observations,
+            submitted_at: leadObj.submittedAt
+          };
+
+          response = await fetch(`${supabaseUrlCleaned}/rest/v1/clientes_consultas`, {
+            method: 'POST',
+            headers: {
+              'apikey': integrationConfig.supabaseAnonKey,
+              'Authorization': `Bearer ${integrationConfig.supabaseAnonKey}`,
+              'Content-Type': 'application/json',
+              'Prefer': 'return=minimal'
+            },
+            body: JSON.stringify(fallbackBody)
+          });
+        }
+
+        if (!response.ok) {
+          const errMsg = await response.text();
+          console.error("Erro ao sincronizar consulta/lead no Supabase:", errMsg);
+          setSupabaseError(`Erro ao salvar diagnóstico no banco: ${errMsg}`);
+        }
+      } catch (err: any) {
+        console.error("Erro ao sincronizar consulta/lead no Supabase:", err);
+        setSupabaseError(`Falha de conexão ao enviar consulta: ${err.message || err}`);
+      }
+    }
   };
 
-  const handleDeleteLead = (id: string) => {
+  const handleDeleteLead = async (id: string) => {
     if (window.confirm("Apagar consulta deste lead?")) {
       const updated = leads.filter(l => l.id !== id);
       setLeads(updated);
       localStorage.setItem('saboaria_leads', JSON.stringify(updated));
+
+      // Synchronize deletion with Supabase
+      if (supabaseUrlCleaned && integrationConfig.supabaseAnonKey && isUUID(id)) {
+        try {
+          const response = await fetch(`${supabaseUrlCleaned}/rest/v1/clientes_consultas?id=eq.${id}`, {
+            method: 'DELETE',
+            headers: {
+              'apikey': integrationConfig.supabaseAnonKey,
+              'Authorization': `Bearer ${integrationConfig.supabaseAnonKey}`
+            }
+          });
+          if (!response.ok) {
+            const errMsg = await response.text();
+            console.error("Erro ao deletar lead no Supabase:", errMsg);
+          }
+        } catch (err) {
+          console.error("Falha ao comunicar exclusão com Supabase:", err);
+        }
+      }
     }
   };
 
-  const handleToggleLeadStatus = (id: string) => {
+  const handleToggleLeadStatus = async (id: string) => {
     const statuses: Array<'Pendente' | 'Respondido' | 'Em Produção'> = ['Pendente', 'Respondido', 'Em Produção'];
+    let nextStatus: 'Pendente' | 'Respondido' | 'Em Produção' = 'Pendente';
     const updated = leads.map(l => {
       if (l.id === id) {
         const nextIndex = (statuses.indexOf(l.status) + 1) % statuses.length;
-        return { ...l, status: statuses[nextIndex] };
+        nextStatus = statuses[nextIndex];
+        return { ...l, status: nextStatus };
       }
       return l;
     });
     setLeads(updated);
     localStorage.setItem('saboaria_leads', JSON.stringify(updated));
+
+    // Synchronize status change with Supabase
+    if (supabaseUrlCleaned && integrationConfig.supabaseAnonKey && isUUID(id)) {
+      try {
+        // Try PATCHing status first
+        const response = await fetch(`${supabaseUrlCleaned}/rest/v1/clientes_consultas?id=eq.${id}`, {
+          method: 'PATCH',
+          headers: {
+            'apikey': integrationConfig.supabaseAnonKey,
+            'Authorization': `Bearer ${integrationConfig.supabaseAnonKey}`,
+            'Content-Type': 'application/json',
+            'Prefer': 'return=minimal'
+          },
+          body: JSON.stringify({
+            status: nextStatus
+          })
+        });
+        if (!response.ok) {
+          const errMsg = await response.text();
+          console.warn("Erro ao atualizar status do lead no Supabase. Isso pode indicar falta da coluna 'status' no seu banco de dados:", errMsg);
+        }
+      } catch (err) {
+        console.error("Falha ao atualizar status do lead no Supabase:", err);
+      }
+    }
   };
 
   const handleLoginSuccess = (user: { type: 'client' | 'admin'; data?: UserClient }) => {
@@ -187,13 +659,38 @@ export default function App() {
         
         {/* Banner with Integration info when configured */}
         {(integrationConfig.supabaseUrl || integrationConfig.n8nWebhookUrl) && (
-          <div className="bg-emerald-600 text-white text-xs py-2 px-4 text-center font-bold flex items-center justify-center gap-1.5 shadow-sm animate-pulse">
-            <Database className="h-3.5 w-3.5" />
-            <span>
-              Integração ativa! Enviando dados para {integrationConfig.supabaseUrl ? 'Supabase' : ''} 
-              {integrationConfig.supabaseUrl && integrationConfig.n8nWebhookUrl ? ' e ' : ''} 
-              {integrationConfig.n8nWebhookUrl ? 'Webhook n8n' : ''}
-            </span>
+          <div className={`text-white text-xs py-2.5 px-4 text-center font-semibold flex flex-col md:flex-row items-center justify-center gap-2 shadow-sm transition-all ${supabaseError ? 'bg-amber-600 border-b border-amber-500 animate-pulse' : 'bg-[#2d5a27]'}`}>
+            <div className="flex items-center gap-1.5 justify-center flex-wrap">
+              <Database className="h-4 w-4 shrink-0" />
+              <span>
+                {supabaseError ? (
+                  <span className="font-bold">Aviso de Sincronização Supabase: </span>
+                ) : isSupabaseLoading ? (
+                  <span>Sincronizando com o Supabase...</span>
+                ) : (
+                  <span>Integração Ativa! Catálogo e Clientes sincronizados ao vivo no seu Banco de Dados.</span>
+                )}
+              </span>
+              {supabaseError && (
+                <span className="text-[11px] bg-black/20 px-2 py-0.5 rounded font-mono max-w-sm sm:max-w-md md:max-w-xl truncate inline-block">
+                  {supabaseError}
+                </span>
+              )}
+            </div>
+            {supabaseError && (
+              <button 
+                onClick={() => {
+                  setSupabaseError(null);
+                  setShowGuide(true);
+                  setTimeout(() => {
+                    document.getElementById('guia')?.scrollIntoView({ behavior: 'smooth' });
+                  }, 120);
+                }}
+                className="text-[10px] bg-white text-amber-950 px-2.5 py-1 rounded-full font-bold hover:bg-amber-50 transition-all cursor-pointer shadow-xs inline-flex items-center gap-1 shrink-0"
+              >
+                Como configurar tabelas/schema?
+              </button>
+            )}
           </div>
         )}
 
@@ -223,6 +720,7 @@ export default function App() {
             setAuthModalTab(tab);
             setIsAuthModalOpen(true);
           }}
+          mercadoLivreUrl={integrationConfig.mercadoLivreUrl}
         />
 
         {/* Custom Skincare consultative Form */}

@@ -1,6 +1,6 @@
 import React, { useState, useId } from 'react';
 import { Product } from '../types';
-import { Plus, Trash2, Edit2, Package, Sparkles, Scale, Info, Check, RefreshCw, Layers, ExternalLink, X, Heart } from 'lucide-react';
+import { Plus, Trash2, Edit2, Package, Sparkles, Scale, Info, Check, RefreshCw, Layers, ExternalLink, X, Heart, Upload } from 'lucide-react';
 
 interface ProductCatalogProps {
   products: Product[];
@@ -10,6 +10,7 @@ interface ProductCatalogProps {
   onResetProducts: () => void;
   isAdmin?: boolean;
   onOpenAuth?: (tab: 'client_login' | 'client_register' | 'admin_login') => void;
+  mercadoLivreUrl?: string;
 }
 
 const CATEGORIES = ["Todos", "Pele Sensível", "Pele Oleosa", "Pele Mista", "Esfoliante Suave"];
@@ -28,14 +29,15 @@ export default function ProductCatalog({
   onDeleteProduct, 
   onResetProducts, 
   isAdmin = false,
-  onOpenAuth
+  onOpenAuth,
+  mercadoLivreUrl
 }: ProductCatalogProps) {
   const [selectedCategory, setSelectedCategory] = useState<string>("Todos");
   const [isAdminOpen, setIsAdminOpen] = useState<boolean>(false);
   const [editingId, setEditingId] = useState<string | null>(null);
 
   // Custom modal/toast states instead of Native Alerts
-  const [activeNotification, setActiveNotification] = useState<{title: string, message: string} | null>(null);
+  const [activeNotification, setActiveNotification] = useState<{title: string, message: string, url?: string} | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   // Form states for adding/editing
@@ -82,9 +84,20 @@ export default function ProductCatalog({
       }
       setEditingId(null);
     } else {
-      // Create new
+      // Create new with a database-compatible UUID
+      const generateUUID = () => {
+        if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+          return crypto.randomUUID();
+        }
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+          const r = (Math.random() * 16) | 0;
+          const v = c === 'x' ? r : (r & 0x3) | 0x8;
+          return v.toString(16);
+        });
+      };
+
       const newSoap: Product = {
-        id: `prod-custom-${Date.now()}`,
+        id: generateUUID(),
         name,
         description,
         price: Number(price),
@@ -329,26 +342,102 @@ export default function ProductCatalog({
                 />
               </div>
 
-              <div className="md:col-span-12 space-y-1">
-                <label className="block text-[11px] font-bold text-sage-800 uppercase tracking-wider">Imagem Representativa</label>
+              <div className="md:col-span-12 space-y-3 p-4.5 bg-sage-50/50 rounded-2xl border border-sage-100">
+                <div>
+                  <label className="block text-[11px] font-bold text-sage-800 uppercase tracking-wider">Imagem Representativa</label>
+                  <p className="text-[10px] text-gray-500 font-light">Selecione uma imagem curada, envie um arquivo do seu computador/celular ou digite um link web.</p>
+                </div>
+                
+                {/* Predefined botanical images selection */}
                 <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-                  {CHOOSE_IMAGES.map((img) => (
-                    <button
-                      type="button"
-                      key={img.url}
-                      onClick={() => setImgUrl(img.url)}
-                      className={`relative rounded-xl overflow-hidden border-2 h-14 transition-all cursor-pointer ${
-                        imgUrl === img.url ? "border-[#2d5a27] scale-95" : "border-transparent opacity-60 hover:opacity-100"
-                      }`}
-                    >
-                      <img src={img.url} alt="Soap preview option" className="w-full h-full object-cover" />
-                      {imgUrl === img.url && (
-                        <span className="absolute inset-0 bg-[#2d5a27]/30 flex items-center justify-center text-white">
-                          <Check className="h-5 w-5 bg-[#2d5a27] rounded-full p-1" />
-                        </span>
-                      )}
-                    </button>
-                  ))}
+                  {CHOOSE_IMAGES.map((img) => {
+                    const isSelected = imgUrl === img.url;
+                    return (
+                      <button
+                        type="button"
+                        key={img.url}
+                        onClick={() => setImgUrl(img.url)}
+                        className={`relative rounded-xl overflow-hidden border-2 h-14 transition-all cursor-pointer ${
+                          isSelected ? "border-[#2d5a27] scale-95" : "border-transparent opacity-60 hover:opacity-100"
+                        }`}
+                        title={img.label}
+                      >
+                        <img src={img.url} alt="Soap preview" className="w-full h-full object-cover" />
+                        {isSelected && (
+                          <span className="absolute inset-0 bg-[#2d5a27]/20 flex items-center justify-center text-white">
+                            <Check className="h-5 w-5 bg-[#2d5a27] rounded-full p-1" />
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Local Upload option (Converts into Base64 for instant client-side storage) */}
+                <div className="pt-2.5 border-t border-sage-200/50 space-y-1.5">
+                  <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider flex items-center gap-1">
+                    <Upload className="h-3 w-3 text-[#2d5a27]" />
+                    <span>Enviar Arquivo de Imagem do seu Dispositivo:</span>
+                  </label>
+                  
+                  <div className="flex flex-col sm:flex-row items-center gap-3">
+                    <label className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2.5 bg-white border border-[#2d5a27]/30 hover:bg-[#e2ebe3] text-[#2d5a27] text-xs font-bold rounded-xl transition-all cursor-pointer shadow-3xs active:scale-95">
+                      <Upload className="h-4 w-4" />
+                      <span>Selecionar Arquivo</span>
+                      <input 
+                        type="file" 
+                        accept="image/*" 
+                        className="hidden" 
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            const reader = new FileReader();
+                            reader.onloadend = () => {
+                              if (typeof reader.result === 'string') {
+                                setImgUrl(reader.result);
+                              }
+                            };
+                            reader.readAsDataURL(file);
+                          }
+                        }}
+                      />
+                    </label>
+
+                    {imgUrl?.startsWith('data:image/') ? (
+                      <span className="text-[11px] text-emerald-800 bg-emerald-50 border border-emerald-100 px-3 py-1.5 rounded-lg font-medium">
+                        ✓ Imagem carregada do seu dispositivo com sucesso!
+                      </span>
+                    ) : (
+                      <span className="text-[10px] text-gray-400 font-light">Nenhum arquivo local selecionado.</span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Custom Image URL Field */}
+                <div className="pt-2.5 border-t border-sage-200/50 space-y-1.5">
+                  <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider">Ou digite o link de uma imagem (URL):</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="url"
+                      placeholder="Cole aqui o link da imagem (ex: https://site.com/imagem.jpg)"
+                      value={imgUrl}
+                      onChange={(e) => setImgUrl(e.target.value)}
+                      className="w-full text-xs p-2.5 bg-white border border-gray-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-[#2d5a27]"
+                    />
+                    {imgUrl && (
+                      <div className="h-10 w-10 shrink-0 rounded-xl overflow-hidden border border-gray-200 shadow-2xs">
+                        <img 
+                          src={imgUrl} 
+                          alt="Custom Link Preview" 
+                          className="w-full h-full object-cover" 
+                          onError={(e) => { (e.target as HTMLElement).style.display = 'none'; }} 
+                        />
+                      </div>
+                    )}
+                  </div>
+                  <span className="text-[10px] text-gray-400 font-light block leading-relaxed">
+                    💡 Pode ser links copiados do seu Pinterest, Instagram, Mercado Livre, Facebook ou WhatsApp!
+                  </span>
                 </div>
               </div>
 
@@ -457,10 +546,18 @@ export default function ProductCatalog({
                     <div className="flex items-center gap-1">
                       {/* Shop Affiliate popup indicator button */}
                       <button
-                        onClick={() => setActiveNotification({
-                          title: "Redirecionamento Afiliado",
-                          message: `Você está sendo direcionada para sua Loja Afiliada do Mercado Livre oficial para adquirir o sabonete "${product.name}". Esse processo é seguro!`
-                        })}
+                        onClick={() => {
+                          const isHoneySoap = product.name.toLowerCase().includes('mel') || product.id === 'prod-3';
+                          const url = isHoneySoap 
+                            ? "https://www.mercadolivre.com.br/sabonete-barra-artesanal-mel-propolis-base-glicerina-natural/p/MLB67888540#polycard_client=search-desktop&be_origin=backend&search_layout=grid&position=29&type=product&tracking_id=e7625bd4-30c5-4a42-802d-5dcb6e2fe392&wid=MLB4600328969&sid=search"
+                            : (mercadoLivreUrl || "https://lista.mercadolivre.com.br/saboaria-artesanal");
+                          
+                          setActiveNotification({
+                            title: "Redirecionamento de Compra",
+                            message: `Você está sendo redirecionada de forma segura para o Mercado Livre oficial para adquirir o sabonete "${product.name}".`,
+                            url
+                          });
+                        }}
                         className={`px-4 py-2 rounded-full text-xs font-bold transition-all ${
                           isOutOfStock 
                             ? "bg-gray-100 text-gray-400 cursor-not-allowed" 
@@ -529,12 +626,16 @@ export default function ProductCatalog({
             <h4 className="font-display font-black text-lg text-sage-950">{activeNotification.title}</h4>
             <p className="text-xs text-gray-600 leading-relaxed font-light">{activeNotification.message}</p>
             <div className="pt-2 flex gap-2">
-              <button 
+              <a 
+                href={activeNotification.url || "https://lista.mercadolivre.com.br/saboaria-artesanal"}
+                target="_blank"
+                rel="noopener noreferrer"
                 onClick={() => setActiveNotification(null)}
-                className="w-full py-3 rounded-full text-xs font-bold text-[#2d3277] bg-[#ffe600] uppercase tracking-wider cursor-pointer"
+                className="w-full py-3 rounded-full text-xs font-bold text-[#2d3277] bg-[#ffe600] uppercase tracking-wider cursor-pointer flex items-center justify-center gap-1.5 hover:bg-[#ffe000] focus:outline-none transition-all text-center leading-normal no-underline"
               >
-                Prosseguir para Mercado Livre
-              </button>
+                <span>Prosseguir para Mercado Livre</span>
+                <ExternalLink className="h-3.5 w-3.5" />
+              </a>
             </div>
           </div>
         </div>

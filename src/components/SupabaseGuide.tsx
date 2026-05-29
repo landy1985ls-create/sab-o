@@ -11,7 +11,7 @@ export default function SupabaseGuide() {
   };
 
   const sqlCode = `-- 1. CRIAÇÃO DA TABELA DE PRODUTOS E ESTOQUE
-CREATE TABLE produtos (
+CREATE TABLE IF NOT EXISTS produtos (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   name VARCHAR(255) NOT NULL,
   description TEXT,
@@ -26,7 +26,7 @@ CREATE TABLE produtos (
 );
 
 -- 2. CRIAÇÃO DA TABELA DE LEADS (CONSULTAS DE PELE)
-CREATE TABLE clientes_consultas (
+CREATE TABLE IF NOT EXISTS clientes_consultas (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   name VARCHAR(255) NOT NULL,
   email VARCHAR(255) NOT NULL,
@@ -35,22 +35,59 @@ CREATE TABLE clientes_consultas (
   concern VARCHAR(100),
   fragrance_pref VARCHAR(100),
   observations TEXT,
+  status VARCHAR(50) DEFAULT 'Pendente',
+  client_id UUID,
   submitted_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- 3. EXEMPLO DE INSERT INICIAL DO SEU PRODUTO MANUAL
-INSERT INTO produtos (name, description, price, weight, category, ingredients, benefits, image, stock)
+-- 3. ATIVAÇÃO DE RLS (ROW LEVEL SECURITY)
+ALTER TABLE produtos ENABLE ROW LEVEL SECURITY;
+ALTER TABLE clientes_consultas ENABLE ROW LEVEL SECURITY;
+
+-- 4. REMOVE POLÍTICAS ANTERIORES PARA EVITAR ERROS DE DUPLICIDADE
+DROP POLICY IF EXISTS "Permitir leitura pública de produtos" ON produtos;
+DROP POLICY IF EXISTS "Permitir gestão total de produtos para chaves autorizadas" ON produtos;
+DROP POLICY IF EXISTS "Permitir envio público de consultas de pele" ON clientes_consultas;
+DROP POLICY IF EXISTS "Permitir visualização e gestão de consultas de pele" ON clientes_consultas;
+
+-- 5. POLÍTICAS DE ACESSO (POLICIES) PARA PRODUTOS
+-- Permite leitura de produtos por qualquer visitante do site
+CREATE POLICY "Permitir leitura pública de produtos" 
+ON produtos FOR SELECT 
+USING (true);
+
+-- Permite inserção, edição e exclusão de produtos
+CREATE POLICY "Permitir gestão total de produtos para chaves autorizadas" 
+ON produtos FOR ALL 
+USING (true) 
+WITH CHECK (true);
+
+-- 6. POLÍTICAS DE ACESSO (POLICIES) PARA CLIENTES E CONSULTAS
+-- Permite que os clientes enviem dados do formulário de diagnóstico (público)
+CREATE POLICY "Permitir envio público de consultas de pele" 
+ON clientes_consultas FOR INSERT 
+WITH CHECK (true);
+
+-- Permite visualizar e gerenciar os leads registrados
+CREATE POLICY "Permitir visualização e gestão de consultas de pele" 
+ON clientes_consultas FOR ALL 
+USING (true) 
+WITH CHECK (true);
+
+-- 7. EXEMPLO DE INSERT INICIAL (OPCIONAL)
+INSERT INTO produtos (id, name, description, price, weight, category, ingredients, benefits, image, stock)
 VALUES (
-  'Lavanda Francesa & Karité',
-  'Ideal para peles secas e sensíveis, acalma irritações.',
+  '10a26e84-18ca-4dbb-80df-269fa5bee6a1',
+  'Canela & Amêndoas (Esfoliante)',
+  'Proporciona uma esfoliação suave e revigorante para peles opacas.',
   24.90,
-  110,
-  'Pele Sensível',
-  ARRAY['Óleo Essencial de Lavanda', 'Manteiga de Karité', 'Óleo de Coco'],
-  ARRAY['Hidratação profunda', 'Relaxante'],
+  115,
+  'Esfoliante Suave',
+  ARRAY['Óleo Essencial de Canela', 'Óleo de Amêndoas Doces', 'Sementes de Damasco'],
+  ARRAY['Esfoliação suave', 'Estimulante', 'Nutrição'],
   'https://images.unsplash.com/photo-1607006342461-9010df2327cf',
-  15
-);`;
+  12
+) ON CONFLICT (id) DO NOTHING;`;
 
   const n8nWorkflowDesc = `{
   "meta": { "instanceId": "random_id" },
